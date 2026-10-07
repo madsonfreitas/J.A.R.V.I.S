@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { claimPermit, type Permit, type PermitClaim, UnknownEffectError } from "../cycle/execution.js";
 import type { DraftArtifact, Goal } from "../documentary/contracts.js";
 import type {
   CreateDraftRequest,
@@ -24,6 +25,7 @@ export class AnthropicIntelligence implements DocumentaryIntelligencePort {
   ) {}
 
   public async understandIntent(
+    permit: Permit,
     request: UnderstandIntentRequest,
   ): Promise<Goal> {
     const clarificationText =
@@ -35,7 +37,7 @@ export class AnthropicIntelligence implements DocumentaryIntelligencePort {
             )
             .join("\n");
 
-    const json = await this.complete(`
+    const json = await this.complete(permit, intentionClaim(permit, this.model), `
 ${UNTRUSTED_CONTENT_RULES}
 
 Transforme a intenção em um objetivo operacional.
@@ -59,10 +61,13 @@ JSON esperado:
 Pergunte somente o que for material. Se o objetivo já estiver claro, questions deve ser [].
 `);
 
-    return GoalSchema.parse(json);
+    return parseModelResult(GoalSchema, json);
   }
 
-  public async createDraft(request: CreateDraftRequest): Promise<DraftArtifact> {
+  public async createDraft(
+    permit: Permit,
+    request: CreateDraftRequest,
+  ): Promise<DraftArtifact> {
     const sources = request.context.sources
       .map(
         (source) =>
@@ -70,7 +75,7 @@ Pergunte somente o que for material. Se o objetivo já estiver claro, questions 
       )
       .join("\n\n");
 
-    const json = await this.complete(`
+    const json = await this.complete(permit, sourcesClaim(permit, this.model), `
 ${UNTRUSTED_CONTENT_RULES}
 
 Objetivo:
@@ -99,15 +104,29 @@ JSON esperado:
 }
 `);
 
-    return DraftArtifactSchema.parse(json);
+    return parseModelResult(DraftArtifactSchema, json);
   }
 
-  private async complete(prompt: string): Promise<unknown> {
-    const response = await this.client.messages.create({
-      model: this.model,
-      max_tokens: 4096,
-      messages: [{ role: "user", content: prompt }],
-    });
+  private async complete(
+    permit: Permit,
+    claim: PermitClaim,
+    prompt: string,
+  ): Promise<unknown> {
+    claimPermit(permit, claim);
+    let response;
+    try {
+      response = await this.client.messages.create({
+        model: this.model,
+        max_tokens: 4096,
+        messages: [{ role: "user", content: prompt }],
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "falha na chamada";
+      throw new UnknownEffectError(
+        `A chamada externa foi iniciada, mas não há evidência suficiente do efeito. ${message}`,
+        { cause: error },
+      );
+    }
 
     const text = response.content
       .filter((block) => block.type === "text")
@@ -115,7 +134,45 @@ JSON esperado:
       .join("\n")
       .trim();
 
-    return parseJsonObject(text);
+    try {
+      return parseJsonObject(text);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "resposta inválida";
+      throw new Error(
+        `A chamada externa ao modelo ocorreu, mas o processamento local da resposta falhou. ${message}`,
+      );
+    }
+  }
+}
+
+function intentionClaim(permit: Permit, model: string): PermitClaim {
+  return {
+    runId: permit.runId,
+    attemptId: permit.attemptId,
+    capability: "send_intention_to_model",
+    resource: model,
+    destination: model,
+  };
+}
+
+function sourcesClaim(permit: Permit, model: string): PermitClaim {
+  return {
+    runId: permit.runId,
+    attemptId: permit.attemptId,
+    capability: "send_sources_to_model",
+    resource: model,
+    destination: model,
+  };
+}
+
+function parseModelResult<T>(schema: { parse: (value: unknown) => T }, value: unknown): T {
+  try {
+    return schema.parse(value);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "resposta inválida";
+    throw new Error(
+      `A chamada externa ao modelo ocorreu, mas o processamento local da resposta falhou. ${message}`,
+    );
   }
 }
 

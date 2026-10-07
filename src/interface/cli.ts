@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import type { TaskStatus } from "../cycle/contracts.js";
+import type { ExperimentStatus } from "../documentary/contracts.js";
 import { collectInput } from "../documentary/collect-input.js";
 import type { DocumentaryInteraction } from "../documentary/interaction.js";
 
@@ -11,7 +11,7 @@ export class CliInteraction implements DocumentaryInteraction {
     private readonly readline = createInterface({ input, output }),
   ) {}
 
-  public async showStatus(status: TaskStatus, message: string): Promise<void> {
+  public async showStatus(status: ExperimentStatus, message: string): Promise<void> {
     output.write(`[${status}] ${message}\n`);
   }
 

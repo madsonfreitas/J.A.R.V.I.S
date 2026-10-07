@@ -64,6 +64,16 @@ describe("ExperimentPolicy", () => {
 
     expect(
       policy.evaluate({
+        capability: "send_intention_to_model",
+        resource: "claude-sonnet-5",
+        destination: "claude-sonnet-5",
+        effect: "enviar intenção",
+        reversible: false,
+      }).outcome,
+    ).toBe("require_approval");
+
+    expect(
+      policy.evaluate({
         capability: "create_artifact",
         resource: resolve("tmp/result.md"),
         destination: resolve("tmp/result.md"),

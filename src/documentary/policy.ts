@@ -16,6 +16,7 @@ export class ExperimentPolicy {
       case "read_source":
         return this.evaluateRead(action);
       case "send_sources_to_model":
+      case "send_intention_to_model":
         return {
           action,
           outcome: "require_approval",

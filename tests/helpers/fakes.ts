@@ -1,8 +1,9 @@
+import { claimPermit, type Permit } from "../../src/cycle/execution.js";
 import type {
   DraftArtifact,
   ExperimentInteraction,
   Goal,
-  TaskStatus,
+  ExperimentStatus,
 } from "../../src/documentary/contracts.js";
 import type {
   CreateDraftRequest,
@@ -17,8 +18,16 @@ export class FakeIntelligence implements DocumentaryIntelligencePort {
   ) {}
 
   public async understandIntent(
+    permit: Permit,
     request: UnderstandIntentRequest,
   ): Promise<Goal> {
+    claimPermit(permit, {
+      runId: permit.runId,
+      attemptId: permit.attemptId,
+      capability: "send_intention_to_model",
+      resource: permit.resource,
+      destination: permit.destination,
+    });
     return {
       summary: request.intention,
       purpose: "Produzir um artefato estruturado a partir das fontes autorizadas.",
@@ -29,7 +38,17 @@ export class FakeIntelligence implements DocumentaryIntelligencePort {
     };
   }
 
-  public async createDraft(request: CreateDraftRequest): Promise<DraftArtifact> {
+  public async createDraft(
+    permit: Permit,
+    request: CreateDraftRequest,
+  ): Promise<DraftArtifact> {
+    claimPermit(permit, {
+      runId: permit.runId,
+      attemptId: permit.attemptId,
+      capability: "send_sources_to_model",
+      resource: permit.resource,
+      destination: permit.destination,
+    });
     if (this.draftOverride) {
       return this.draftOverride;
     }
@@ -84,7 +103,7 @@ export class FakeIntelligence implements DocumentaryIntelligencePort {
 }
 
 export class ScriptedInteraction implements ExperimentInteraction {
-  public readonly statuses: TaskStatus[] = [];
+  public readonly statuses: ExperimentStatus[] = [];
   public preview: string | null = null;
   private confirmIndex = 0;
   private questionIndex = 0;
@@ -95,7 +114,7 @@ export class ScriptedInteraction implements ExperimentInteraction {
     private readonly outputPath: string,
   ) {}
 
-  public async showStatus(status: TaskStatus): Promise<void> {
+  public async showStatus(status: ExperimentStatus): Promise<void> {
     this.statuses.push(status);
   }
 

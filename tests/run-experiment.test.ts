@@ -68,7 +68,7 @@ describe("ExperimentRunner", () => {
     const originalAlpha = await readFile(sourceAlpha, "utf8");
     const originalBeta = await readFile(sourceBeta, "utf8");
     const { runner, interaction, outputPath, recorder } = await createHarness({
-      confirms: [true, true, true],
+      confirms: [true, true, true, true],
     });
 
     try {
@@ -95,7 +95,7 @@ describe("ExperimentRunner", () => {
 
   it("cancela antes de criar o artefato", async () => {
     const { runner, outputPath, recorder } = await createHarness({
-      confirms: [true, true, false],
+      confirms: [true, true, true, false],
     });
 
     try {
@@ -113,7 +113,7 @@ describe("ExperimentRunner", () => {
 
   it("recusa destino que sobrescreveria uma fonte original", async () => {
     const { runner, recorder } = await createHarness({
-      confirms: [true, true],
+      confirms: [true, true, true],
       outputPath: sourceAlpha,
     });
 
@@ -132,7 +132,7 @@ describe("ExperimentRunner", () => {
 
   it("falha quando o rascunho não é rastreável", async () => {
     const { runner, recorder, outputPath } = await createHarness({
-      confirms: [true, true],
+      confirms: [true, true, true],
       invalidDraft: true,
     });
 
