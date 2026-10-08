@@ -6,6 +6,29 @@ import type { DocumentaryInteraction } from "../documentary/interaction.js";
 
 export { collectInput };
 
+export function exitCodeForStatus(status: string): number {
+  if (status === "unknown") {
+    return 2;
+  }
+  if (status === "failed" || status === "rejected") {
+    return 1;
+  }
+  return 0;
+}
+
+export function confirmationPrompt(title: string): string {
+  if (title === "Confirmar objetivo") {
+    return "Aceitar esta interpretação do objetivo? Isto não autoriza envio nem criação de arquivo. [s/N] ";
+  }
+  if (title.startsWith("Enviar")) {
+    return "Autorizar este envio ao modelo? [s/N] ";
+  }
+  if (title.startsWith("Criar")) {
+    return "Autorizar a criação deste arquivo novo? [s/N] ";
+  }
+  return "Autorizar exatamente esta ação, e nenhuma outra? [s/N] ";
+}
+
 export class CliInteraction implements DocumentaryInteraction {
   public constructor(
     private readonly readline = createInterface({ input, output }),
@@ -28,7 +51,7 @@ export class CliInteraction implements DocumentaryInteraction {
     for (const detail of details) {
       output.write(`- ${detail}\n`);
     }
-    const answer = await this.readline.question("Confirmar? [s/N] ");
+    const answer = await this.readline.question(confirmationPrompt(title));
     return /^s(im)?$/i.test(answer.trim());
   }
 

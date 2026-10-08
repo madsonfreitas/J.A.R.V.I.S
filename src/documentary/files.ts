@@ -3,8 +3,9 @@ import { open, readFile, stat, unlink } from "node:fs/promises";
 import { basename, extname, resolve } from "node:path";
 import { claimPermit, UnknownEffectError, type Permit } from "../cycle/execution.js";
 import type { CapabilityEffect, SourceDescriptor } from "./contracts.js";
+import { extractPdfText } from "./pdf-text.js";
 
-const ALLOWED_EXTENSIONS = new Set([".txt", ".md"]);
+const ALLOWED_EXTENSIONS = new Set([".txt", ".md", ".pdf"]);
 
 export class FileCapabilities {
   public constructor(private readonly maxSourceBytes: number) {}
@@ -15,7 +16,7 @@ export class FileCapabilities {
 
     if (!ALLOWED_EXTENSIONS.has(extension)) {
       throw new Error(
-        `Somente arquivos .txt e .md são aceitos neste experimento: ${resolved}`,
+        `Somente arquivos .txt, .md e .pdf são aceitos neste experimento: ${resolved}`,
       );
     }
 
@@ -50,6 +51,10 @@ export class FileCapabilities {
       resource: source.path,
       destination: null,
     });
+    if (extname(source.path).toLowerCase() === ".pdf") {
+      const bytes = new Uint8Array(await readFile(source.path));
+      return extractPdfText(bytes);
+    }
     return readFile(source.path, "utf8");
   }
 

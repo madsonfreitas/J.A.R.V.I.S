@@ -47,11 +47,11 @@ describe("FileCapabilities", () => {
   it("recusa extensões fora do experimento", async () => {
     const directory = await mkdtemp(join(tmpdir(), "jarvis-files-"));
     directories.push(directory);
-    const source = join(directory, "notes.pdf");
+    const source = join(directory, "notes.png");
     await writeFile(source, "x");
     const files = new FileCapabilities(1_000_000);
 
-    await expect(files.inspect(source)).rejects.toThrow(/\.txt e \.md/);
+    await expect(files.inspect(source)).rejects.toThrow(/\.txt, \.md e \.pdf/);
   });
 });
 

@@ -156,6 +156,7 @@ export class ExperimentRunner {
       const goalConfirmed = await this.deps.interaction.confirm(
         "Confirmar objetivo",
         [
+          "Aceitar a interpretação não cria Permit e não autoriza envio nem arquivo.",
           `Resumo: ${goal.summary}`,
           `Finalidade: ${goal.purpose}`,
           `Público: ${goal.audience ?? "não informado"}`,
@@ -219,9 +220,11 @@ export class ExperimentRunner {
         async (decision) => {
           await setStatus("awaiting_approval", decision.reason);
           return this.deps.interaction.confirm("Enviar fontes ao provedor de IA", [
+            "Efeito autorizado somente se você aceitar: enviar o conteúdo destas fontes ao modelo.",
             `Provedor/modelo: ${this.deps.modelLabel}`,
             "O conteúdo das fontes autorizadas será enviado agora.",
             "Não envie documentos com segredos.",
+            "Isto não autoriza criar o arquivo.",
             ...sources.map((source) => `Fonte: ${source.path}`),
           ]);
         },
@@ -271,6 +274,7 @@ export class ExperimentRunner {
         async (decision) => {
           await setStatus("awaiting_approval", decision.reason);
           return this.deps.interaction.confirm("Criar artefato final", [
+            "Efeito autorizado somente se você aceitar: criar um arquivo novo neste destino.",
             `Destino: ${outputPath}`,
             "O arquivo será criado somente se ainda não existir.",
             "Nenhuma fonte original será alterada.",
@@ -378,9 +382,11 @@ export class ExperimentRunner {
       async (decision) => {
         await setStatus("awaiting_approval", decision.reason);
         return this.deps.interaction.confirm("Enviar intenção ao provedor de IA", [
+          "Efeito autorizado somente se você aceitar: enviar a intenção ao modelo.",
           `Provedor/modelo: ${this.deps.modelLabel}`,
           "A intenção e os esclarecimentos serão enviados agora.",
           "As fontes ainda não entram nesta chamada.",
+          "Isto não autoriza o envio das fontes nem a criação do arquivo.",
         ]);
       },
     );

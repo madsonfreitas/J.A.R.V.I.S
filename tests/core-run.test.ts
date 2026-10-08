@@ -237,6 +237,43 @@ describe("CoreRun", () => {
     expect(calls).toBe(1);
   });
 
+  it("rejeita Permit de outro run e Permit reconstruído", async () => {
+    const captured: { permit?: Permit } = {};
+    const result = await createCoreRun("run-a15").attempt({
+      proposal,
+      evaluate: decision("allow"),
+      confirm: async () => true,
+      execute: async (issued) => {
+        captured.permit = issued;
+        claimPermit(issued, claimOf(issued));
+        return "ok";
+      },
+    });
+
+    expect(result.outcome).toBe("executed");
+    const permit = captured.permit;
+    expect(permit).toBeDefined();
+    if (!permit) {
+      return;
+    }
+
+    expect(() => claimPermit(permit, { ...claimOf(permit), runId: "outro-run" })).toThrow(
+      /não pertence|consumido/,
+    );
+
+    const forged = {
+      runId: permit.runId,
+      attemptId: permit.attemptId,
+      capability: permit.capability,
+      resource: permit.resource,
+      destination: permit.destination,
+    };
+    expect(() => claimPermit(forged, claimOf(forged))).toThrow(/ausente|não emitido/);
+
+    const rehydrated = JSON.parse(JSON.stringify(permit)) as Permit;
+    expect(() => claimPermit(rehydrated, claimOf(rehydrated))).toThrow(/ausente|não emitido/);
+  });
+
   it("não deixa o unknown de uma Attempt autorizar outra", async () => {
     const captured: { permit?: Permit } = {};
     const run = createCoreRun("unknown-isolation");

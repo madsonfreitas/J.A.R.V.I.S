@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.0",
+    "unpdf": "^1.8.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {
