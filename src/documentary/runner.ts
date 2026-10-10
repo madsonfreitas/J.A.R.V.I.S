@@ -13,6 +13,8 @@ import {
   type CoreRun,
   type Permit,
 } from "../cycle/execution.js";
+import type { ProviderName } from "../config.js";
+import { disclosurePrompt, parseDisclosure, type SendDisclosures } from "./disclosure.js";
 import type { DocumentaryIntelligencePort } from "./intelligence-port.js";
 import { TaskContextBuilder } from "./context.js";
 import type {
@@ -41,6 +43,7 @@ export interface ExperimentDependencies {
   readonly interaction: ExperimentInteraction;
   readonly maxTotalCharacters: number;
   readonly modelLabel: string;
+  readonly provider?: ProviderName;
 }
 
 export class ExperimentRunner {
@@ -92,7 +95,10 @@ export class ExperimentRunner {
         })),
       });
 
-      const policy = new ExperimentPolicy(sources);
+      const policy = new ExperimentPolicy(
+        sources,
+        await this.declarePayloads(sources),
+      );
 
       await setStatus("building_context", "Avaliando leitura das fontes autorizadas.");
       for (const source of sources) {
@@ -138,6 +144,15 @@ export class ExperimentRunner {
         for (const question of goal.questions) {
           const answer = await this.deps.interaction.ask(question);
           clarifications.push({ question, answer });
+          policy.addClarificationDisclosure(
+            parseDisclosure(
+              await this.deps.interaction.ask(
+                disclosurePrompt(
+                  "o esclarecimento recém-informado, antes de enviá-lo ao modelo",
+                ),
+              ),
+            ),
+          );
         }
 
         const nextGoal = await this.requestIntention(
@@ -221,9 +236,10 @@ export class ExperimentRunner {
           await setStatus("awaiting_approval", decision.reason);
           return this.deps.interaction.confirm("Enviar fontes ao provedor de IA", [
             "Efeito autorizado somente se você aceitar: enviar o conteúdo destas fontes ao modelo.",
-            `Provedor/modelo: ${this.deps.modelLabel}`,
+            ...this.providerNotice(),
             "O conteúdo das fontes autorizadas será enviado agora.",
             "Não envie documentos com segredos.",
+            "Esta confirmação não classifica o conteúdo e não autoriza outra chamada.",
             "Isto não autoriza criar o arquivo.",
             ...sources.map((source) => `Fonte: ${source.path}`),
           ]);
@@ -344,6 +360,42 @@ export class ExperimentRunner {
     }
   }
 
+  private providerName(): ProviderName {
+    return this.deps.provider ?? "anthropic";
+  }
+
+  private providerNotice(): string[] {
+    const lines = [
+      `Provedor: ${this.providerName()}.`,
+      `Modelo: ${this.deps.modelLabel}.`,
+    ];
+    if (this.providerName() === "gemini") {
+      lines.push(
+        "Gemini Free Tier: os termos aplicáveis podem permitir que o Google use estes dados para melhorar seus produtos.",
+      );
+    }
+    return lines;
+  }
+
+  private async declarePayloads(
+    sources: readonly SourceDescriptor[],
+  ): Promise<SendDisclosures> {
+    const intention = parseDisclosure(
+      await this.deps.interaction.ask(
+        disclosurePrompt("a intenção que será enviada ao modelo"),
+      ),
+    );
+    const declared: Record<string, SendDisclosures["intention"]> = {};
+    for (const source of sources) {
+      declared[source.path] = parseDisclosure(
+        await this.deps.interaction.ask(
+          disclosurePrompt(`a fonte ${source.name} que poderá ser enviada ao modelo`),
+        ),
+      );
+    }
+    return { intention, sources: declared, clarifications: [] };
+  }
+
   private async inspectSources(
     paths: readonly string[],
   ): Promise<SourceDescriptor[]> {
@@ -383,9 +435,10 @@ export class ExperimentRunner {
         await setStatus("awaiting_approval", decision.reason);
         return this.deps.interaction.confirm("Enviar intenção ao provedor de IA", [
           "Efeito autorizado somente se você aceitar: enviar a intenção ao modelo.",
-          `Provedor/modelo: ${this.deps.modelLabel}`,
-          "A intenção e os esclarecimentos serão enviados agora.",
+          ...this.providerNotice(),
+          "A intenção e os esclarecimentos já classificados serão enviados agora.",
           "As fontes ainda não entram nesta chamada.",
+          "Esta confirmação não classifica o conteúdo e não autoriza outra chamada.",
           "Isto não autoriza o envio das fontes nem a criação do arquivo.",
         ]);
       },

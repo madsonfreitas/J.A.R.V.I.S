@@ -8,6 +8,7 @@ import type { ActionProposal } from "../src/cycle/contracts.js";
 import { TaskContextBuilder } from "../src/documentary/context.js";
 import { ExperimentRunner } from "../src/documentary/runner.js";
 import { FileCapabilities } from "../src/documentary/files.js";
+import { declaredPublic } from "../src/documentary/disclosure.js";
 import { ExperimentPolicy } from "../src/documentary/policy.js";
 import type { TaskContext } from "../src/documentary/contracts.js";
 import type {
@@ -106,7 +107,10 @@ describe("A11 — instrução dentro da fonte", () => {
 
     const files = new FileCapabilities(1_000_000);
     const inspected = await files.inspect(sourcePath);
-    const policy = new ExperimentPolicy([inspected]);
+    const policy = new ExperimentPolicy(
+      [inspected],
+      declaredPublic([inspected.path]),
+    );
     const hostileProposal = (capability: string, resource = sourcePath): ActionProposal => ({
       capability,
       resource,
@@ -128,7 +132,11 @@ describe("A11 — instrução dentro da fonte", () => {
       intelligence,
       files,
       recorder,
-      interaction: new ScriptedInteraction([true, true, true, true], [], outputPath),
+      interaction: new ScriptedInteraction(
+        [true, true, true, true],
+        ["public_or_non_sensitive", "public_or_non_sensitive"],
+        outputPath,
+      ),
       maxTotalCharacters: 100_000,
       modelLabel: "fake-model",
     });
