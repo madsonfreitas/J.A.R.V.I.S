@@ -1,17 +1,15 @@
-export type TaskStatus =
+export type RunStatus =
   | "received"
-  | "understanding"
-  | "awaiting_clarification"
-  | "objective_confirmed"
-  | "building_context"
   | "awaiting_approval"
   | "executing"
-  | "validating"
   | "completed"
   | "completed_with_reservations"
   | "rejected"
   | "cancelled"
-  | "failed";
+  | "failed"
+  | "unknown";
+
+export type AttemptOutcome = "denied" | "refused" | "failed" | "executed" | "unknown";
 
 export interface Clarification {
   readonly question: string;

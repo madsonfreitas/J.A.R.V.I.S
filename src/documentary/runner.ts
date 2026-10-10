@@ -5,8 +5,16 @@ import {
   type ActionProposal,
   type Clarification,
   type PolicyDecision,
-  type TaskStatus,
+  type RunStatus,
 } from "../cycle/contracts.js";
+import {
+  createCoreRun,
+  type AttemptResult,
+  type CoreRun,
+  type Permit,
+} from "../cycle/execution.js";
+import type { ProviderName } from "../config.js";
+import { disclosurePrompt, parseDisclosure, type SendDisclosures } from "./disclosure.js";
 import type { DocumentaryIntelligencePort } from "./intelligence-port.js";
 import { TaskContextBuilder } from "./context.js";
 import type {
@@ -15,7 +23,9 @@ import type {
   ExperimentInput,
   ExperimentInteraction,
   ExperimentResult,
+  ExperimentStatus,
   SourceDescriptor,
+  TaskContext,
   ValidationReport,
 } from "./contracts.js";
 import { FileCapabilities } from "./files.js";
@@ -33,6 +43,7 @@ export interface ExperimentDependencies {
   readonly interaction: ExperimentInteraction;
   readonly maxTotalCharacters: number;
   readonly modelLabel: string;
+  readonly provider?: ProviderName;
 }
 
 export class ExperimentRunner {
@@ -41,10 +52,7 @@ export class ExperimentRunner {
   private readonly renderer = new MarkdownRenderer();
 
   public constructor(private readonly deps: ExperimentDependencies) {
-    this.contextBuilder = new TaskContextBuilder(
-      deps.files,
-      deps.maxTotalCharacters,
-    );
+    this.contextBuilder = new TaskContextBuilder(deps.maxTotalCharacters);
   }
 
   public async run(input: ExperimentInput): Promise<ExperimentResult> {
@@ -58,7 +66,8 @@ export class ExperimentRunner {
 
     this.deps.recorder.start(runId, input.intention);
 
-    const setStatus = async (status: TaskStatus, nextMessage: string) => {
+    const session = createCoreRun(runId);
+    const setStatus = async (status: ExperimentStatus, nextMessage: string) => {
       message = nextMessage;
       this.deps.recorder.setStatus(runId, status, nextMessage);
       await this.deps.interaction.showStatus(status, nextMessage);
@@ -86,49 +95,41 @@ export class ExperimentRunner {
         })),
       });
 
-      const policy = new ExperimentPolicy(sources);
+      const policy = new ExperimentPolicy(
+        sources,
+        await this.declarePayloads(sources),
+      );
 
       await setStatus("building_context", "Avaliando leitura das fontes autorizadas.");
       for (const source of sources) {
-        const decision = this.requireDecision(
-          runId,
-          policy.evaluate(readAction(source)),
-        );
-        if (decision.outcome === "deny") {
-          await setStatus("rejected", decision.reason);
-          return this.finish(runId, "rejected", goal, outputPath, validation, effects, message);
+        const preview = policy.evaluate(readAction(source));
+        if (preview.outcome === "deny") {
+          const outcome = await this.perform(session, readAction(source), policy, async () => {
+            throw new Error("Leitura negada não pode executar.");
+          });
+          return this.finishAttempt(
+            runId,
+            outcome,
+            goal,
+            outputPath,
+            validation,
+            effects,
+            setStatus,
+          );
         }
       }
 
-      const sendDecision = this.requireDecision(
-        runId,
-        policy.evaluate(sendToModelAction(this.deps.modelLabel)),
-      );
-      await setStatus("awaiting_approval", sendDecision.reason);
-      const sendApproved = await this.deps.interaction.confirm(
-        "Enviar conteúdo ao provedor de IA",
-        [
-          `Provedor/modelo: ${this.deps.modelLabel}`,
-          "As fontes autorizadas serão enviadas como dados não confiáveis.",
-          "Não envie documentos com segredos.",
-          ...sources.map((source) => `Fonte: ${source.path}`),
-        ],
-      );
-      if (!sendApproved) {
-        throw new ExperimentCancelledError(
-          "O envio de conteúdo ao provedor foi recusado.",
-        );
-      }
-      this.deps.recorder.record(runId, "approval", {
-        action: "send_sources_to_model",
-        approved: true,
-      });
-
-      await setStatus("understanding", "Compreendendo a intenção.");
-      goal = await this.deps.intelligence.understandIntent({
-        intention: input.intention,
+      const understood = await this.requestIntention(
+        session,
+        policy,
+        input.intention,
         clarifications,
-      });
+        setStatus,
+      );
+      if (!isGoal(understood)) {
+        return understood;
+      }
+      goal = understood;
 
       for (let round = 0; round < MAX_CLARIFICATION_ROUNDS; round += 1) {
         if (goal.questions.length === 0) {
@@ -143,17 +144,34 @@ export class ExperimentRunner {
         for (const question of goal.questions) {
           const answer = await this.deps.interaction.ask(question);
           clarifications.push({ question, answer });
+          policy.addClarificationDisclosure(
+            parseDisclosure(
+              await this.deps.interaction.ask(
+                disclosurePrompt(
+                  "o esclarecimento recém-informado, antes de enviá-lo ao modelo",
+                ),
+              ),
+            ),
+          );
         }
 
-        goal = await this.deps.intelligence.understandIntent({
-          intention: input.intention,
+        const nextGoal = await this.requestIntention(
+          session,
+          policy,
+          input.intention,
           clarifications,
-        });
+          setStatus,
+        );
+        if (!isGoal(nextGoal)) {
+          return nextGoal;
+        }
+        goal = nextGoal;
       }
 
       const goalConfirmed = await this.deps.interaction.confirm(
         "Confirmar objetivo",
         [
+          "Aceitar a interpretação não cria Permit e não autoriza envio nem arquivo.",
           `Resumo: ${goal.summary}`,
           `Finalidade: ${goal.purpose}`,
           `Público: ${goal.audience ?? "não informado"}`,
@@ -166,23 +184,83 @@ export class ExperimentRunner {
       }
       await setStatus("objective_confirmed", "Objetivo confirmado pelo usuário.");
 
+      if (goal === null) {
+        throw new Error("O objetivo confirmado não está disponível.");
+      }
+      const confirmedGoal = goal;
+
       await setStatus("building_context", "Lendo fontes autorizadas.");
-      const context = await this.contextBuilder.build(sources);
-      for (const source of context.sources) {
+      const reads: { source: SourceDescriptor; content: string }[] = [];
+      for (const source of sources) {
+        const outcome = await this.perform(
+          session,
+          readAction(source),
+          policy,
+          (permit) => this.deps.files.readSource(permit, source),
+        );
+        if (outcome.outcome !== "executed") {
+          return this.finishAttempt(
+            runId,
+            outcome,
+            goal,
+            outputPath,
+            validation,
+            effects,
+            setStatus,
+          );
+        }
+        reads.push({ source, content: outcome.effect });
         effects.push({
           action: "read_source",
           resource: source.path,
           observed: true,
-          details: `Fonte lida como conteúdo não confiável (${source.trust}).`,
+          details: "Fonte lida como conteúdo não confiável (untrusted_content).",
         });
       }
+      const context: TaskContext = this.contextBuilder.assemble(reads);
       this.deps.recorder.record(runId, "context_built", {
         warnings: context.warnings,
         totalCharacters: context.totalCharacters,
       });
 
-      await setStatus("executing", "Formulando o rascunho estruturado.");
-      const draft = await this.deps.intelligence.createDraft({ goal, context });
+      const draftOutcome = await this.perform(
+        session,
+        sendToModelAction(this.deps.modelLabel),
+        policy,
+        (permit) =>
+          this.deps.intelligence.createDraft(permit, {
+            goal: confirmedGoal,
+            context,
+          }),
+        async (decision) => {
+          await setStatus("awaiting_approval", decision.reason);
+          return this.deps.interaction.confirm("Enviar fontes ao provedor de IA", [
+            "Efeito autorizado somente se você aceitar: enviar o conteúdo destas fontes ao modelo.",
+            ...this.providerNotice(),
+            "O conteúdo das fontes autorizadas será enviado agora.",
+            "Não envie documentos com segredos.",
+            "Esta confirmação não classifica o conteúdo e não autoriza outra chamada.",
+            "Isto não autoriza criar o arquivo.",
+            ...sources.map((source) => `Fonte: ${source.path}`),
+          ]);
+        },
+      );
+      if (draftOutcome.outcome !== "executed") {
+        return this.finishAttempt(
+          runId,
+          draftOutcome,
+          goal,
+          outputPath,
+          validation,
+          effects,
+          setStatus,
+        );
+      }
+      const draft = draftOutcome.effect;
+      this.deps.recorder.record(runId, "approval", {
+        action: "send_sources_to_model",
+        approved: true,
+      });
 
       await setStatus("validating", "Validando o rascunho contra fontes e critérios.");
       validation = this.validator.validate(goal, draft, context);
@@ -203,40 +281,41 @@ export class ExperimentRunner {
       const markdown = this.renderer.render(goal, draft, validation);
       await this.deps.interaction.showPreview(markdown);
 
-      await setStatus("awaiting_approval", "Aguardando destino e aprovação do artefato.");
       outputPath = resolve(await this.deps.interaction.requestOutputPath());
-
-      const createDecision = this.requireDecision(
-        runId,
-        policy.evaluate(createAction(outputPath)),
+      const createOutcome = await this.perform(
+        session,
+        createAction(outputPath),
+        policy,
+        (permit) => this.deps.files.createArtifact(permit, outputPath as string, markdown),
+        async (decision) => {
+          await setStatus("awaiting_approval", decision.reason);
+          return this.deps.interaction.confirm("Criar artefato final", [
+            "Efeito autorizado somente se você aceitar: criar um arquivo novo neste destino.",
+            `Destino: ${outputPath}`,
+            "O arquivo será criado somente se ainda não existir.",
+            "Nenhuma fonte original será alterada.",
+            `Validação: ${validation?.status ?? "indisponível"}`,
+          ]);
+        },
       );
-      if (createDecision.outcome === "deny") {
-        await setStatus("rejected", createDecision.reason);
-        return this.finish(runId, "rejected", goal, outputPath, validation, effects, message);
+      if (createOutcome.outcome !== "executed") {
+        return this.finishAttempt(
+          runId,
+          createOutcome,
+          goal,
+          outputPath,
+          validation,
+          effects,
+          setStatus,
+        );
       }
-
-      const createApproved = await this.deps.interaction.confirm(
-        "Criar artefato final",
-        [
-          `Destino: ${outputPath}`,
-          "O arquivo será criado somente se ainda não existir.",
-          "Nenhuma fonte original será alterada.",
-          `Validação: ${validation.status}`,
-        ],
-      );
-      if (!createApproved) {
-        throw new ExperimentCancelledError("A criação do artefato foi recusada.");
-      }
+      effects.push(createOutcome.effect);
       this.deps.recorder.record(runId, "approval", {
         action: "create_artifact",
         approved: true,
         destination: outputPath,
       });
-
-      await setStatus("executing", "Criando o artefato final.");
-      const effect = await this.deps.files.createArtifact(outputPath, markdown);
-      effects.push(effect);
-      this.deps.recorder.record(runId, "effect", { ...effect });
+      this.deps.recorder.record(runId, "effect", { ...createOutcome.effect });
 
       const finalStatus =
         validation.status === "valid"
@@ -281,6 +360,42 @@ export class ExperimentRunner {
     }
   }
 
+  private providerName(): ProviderName {
+    return this.deps.provider ?? "anthropic";
+  }
+
+  private providerNotice(): string[] {
+    const lines = [
+      `Provedor: ${this.providerName()}.`,
+      `Modelo: ${this.deps.modelLabel}.`,
+    ];
+    if (this.providerName() === "gemini") {
+      lines.push(
+        "Gemini Free Tier: os termos aplicáveis podem permitir que o Google use estes dados para melhorar seus produtos.",
+      );
+    }
+    return lines;
+  }
+
+  private async declarePayloads(
+    sources: readonly SourceDescriptor[],
+  ): Promise<SendDisclosures> {
+    const intention = parseDisclosure(
+      await this.deps.interaction.ask(
+        disclosurePrompt("a intenção que será enviada ao modelo"),
+      ),
+    );
+    const declared: Record<string, SendDisclosures["intention"]> = {};
+    for (const source of sources) {
+      declared[source.path] = parseDisclosure(
+        await this.deps.interaction.ask(
+          disclosurePrompt(`a fonte ${source.name} que poderá ser enviada ao modelo`),
+        ),
+      );
+    }
+    return { intention, sources: declared, clarifications: [] };
+  }
+
   private async inspectSources(
     paths: readonly string[],
   ): Promise<SourceDescriptor[]> {
@@ -299,22 +414,141 @@ export class ExperimentRunner {
     return sources;
   }
 
-  private requireDecision(
+  private async requestIntention(
+    session: CoreRun,
+    policy: ExperimentPolicy,
+    intention: string,
+    clarifications: readonly Clarification[],
+    setStatus: (status: ExperimentStatus, message: string) => Promise<void>,
+  ): Promise<DocumentaryGoal | ExperimentResult> {
+    await setStatus("understanding", "Compreendendo a intenção.");
+    const outcome = await this.perform(
+      session,
+      modelAction("send_intention_to_model", this.deps.modelLabel, "Enviar a intenção ao provedor de inteligência."),
+      policy,
+      (permit) =>
+        this.deps.intelligence.understandIntent(permit, {
+          intention,
+          clarifications,
+        }),
+      async (decision) => {
+        await setStatus("awaiting_approval", decision.reason);
+        return this.deps.interaction.confirm("Enviar intenção ao provedor de IA", [
+          "Efeito autorizado somente se você aceitar: enviar a intenção ao modelo.",
+          ...this.providerNotice(),
+          "A intenção e os esclarecimentos já classificados serão enviados agora.",
+          "As fontes ainda não entram nesta chamada.",
+          "Esta confirmação não classifica o conteúdo e não autoriza outra chamada.",
+          "Isto não autoriza o envio das fontes nem a criação do arquivo.",
+        ]);
+      },
+    );
+    if (outcome.outcome !== "executed") {
+      return this.finishAttempt(
+        outcome.runId,
+        outcome,
+        null,
+        null,
+        null,
+        [],
+        setStatus,
+      );
+    }
+    this.deps.recorder.record(outcome.runId, "approval", {
+      action: "send_intention_to_model",
+      approved: true,
+    });
+    return outcome.effect;
+  }
+
+  private async perform<TEffect>(
+    session: CoreRun,
+    proposal: ActionProposal,
+    policy: ExperimentPolicy,
+    execute: (permit: Permit) => Promise<TEffect>,
+    confirm?: (decision: PolicyDecision) => Promise<boolean>,
+  ): Promise<AttemptResult<TEffect>> {
+    const outcome = await session.attempt({
+      proposal,
+      evaluate: (action) => policy.evaluate(action),
+      confirm: async (current) => confirm?.(current) ?? false,
+      execute: async (permit) => {
+        await this.deps.interaction.showStatus("executing", proposal.effect);
+        return execute(permit);
+      },
+    });
+    this.recordAttempt(outcome.runId, outcome);
+    return outcome;
+  }
+
+  private recordAttempt<TEffect>(
     runId: string,
-    decision: PolicyDecision,
-  ): PolicyDecision {
+    outcome: AttemptResult<TEffect>,
+  ): void {
+    const decision = outcome.decision;
     this.deps.recorder.record(runId, "policy", {
+      attemptId: outcome.attemptId,
       outcome: decision.outcome,
       reason: decision.reason,
       resource: decision.action.resource,
+      destination: decision.action.destination,
       action: decision.action.capability,
     });
-    return decision;
+    this.deps.recorder.record(runId, "attempt", {
+      runId,
+      attemptId: outcome.attemptId,
+      action: decision.action.capability,
+      policy: decision.outcome,
+      approval:
+        decision.outcome === "require_approval"
+          ? outcome.outcome !== "refused"
+          : null,
+      permitIssued: outcome.outcome !== "denied" && outcome.outcome !== "refused",
+      permitConsumed: outcome.outcome === "executed" || outcome.outcome === "unknown",
+      executionStarted:
+        outcome.outcome === "executed" ||
+        outcome.outcome === "failed" ||
+        outcome.outcome === "unknown",
+      outcome: outcome.outcome,
+      error:
+        outcome.outcome === "failed" || outcome.outcome === "unknown"
+          ? outcome.message
+          : null,
+    });
+  }
+
+  private async finishAttempt<TEffect>(
+    runId: string,
+    outcome: AttemptResult<TEffect>,
+    goal: DocumentaryGoal | null,
+    outputPath: string | null,
+    validation: ValidationReport | null,
+    effects: readonly CapabilityEffect[],
+    setStatus: (status: ExperimentStatus, message: string) => Promise<void>,
+  ): Promise<ExperimentResult> {
+    if (outcome.outcome === "denied") {
+      await setStatus("rejected", outcome.decision.reason);
+      return this.finish(runId, "rejected", goal, outputPath, validation, effects, outcome.decision.reason);
+    }
+    if (outcome.outcome === "refused") {
+      const reason = "A aprovação exigida foi recusada.";
+      await setStatus("cancelled", reason);
+      return this.finish(runId, "cancelled", goal, outputPath, validation, effects, reason);
+    }
+    if (outcome.outcome === "failed") {
+      await setStatus("failed", outcome.message);
+      return this.finish(runId, "failed", goal, outputPath, validation, effects, outcome.message);
+    }
+    if (outcome.outcome === "unknown") {
+      await setStatus("unknown", outcome.message);
+      return this.finish(runId, "unknown", goal, outputPath, validation, effects, outcome.message);
+    }
+    throw new Error("Attempt executada não encerra o Run por aqui.");
   }
 
   private finish(
     runId: string,
-    status: TaskStatus,
+    status: RunStatus,
     goal: DocumentaryGoal | null,
     outputPath: string | null,
     validation: ValidationReport | null,
@@ -334,6 +568,26 @@ export class ExperimentRunner {
   }
 }
 
+function modelAction(
+  capability: string,
+  modelLabel: string,
+  effect: string,
+): ActionProposal {
+  return {
+    capability,
+    resource: modelLabel,
+    destination: modelLabel,
+    effect,
+    reversible: false,
+  };
+}
+
+function isGoal(
+  value: DocumentaryGoal | ExperimentResult,
+): value is DocumentaryGoal {
+  return !("runId" in value);
+}
+
 function readAction(source: SourceDescriptor): ActionProposal {
   return {
     capability: "read_source",
@@ -345,13 +599,11 @@ function readAction(source: SourceDescriptor): ActionProposal {
 }
 
 function sendToModelAction(modelLabel: string): ActionProposal {
-  return {
-    capability: "send_sources_to_model",
-    resource: modelLabel,
-    destination: modelLabel,
-    effect: "Enviar conteúdo das fontes a um provedor externo.",
-    reversible: false,
-  };
+  return modelAction(
+    "send_sources_to_model",
+    modelLabel,
+    "Enviar o conteúdo das fontes ao provedor de inteligência.",
+  );
 }
 
 function createAction(destination: string): ActionProposal {

@@ -13,3 +13,6 @@ coverage/
 
 *.log
 *.tmp
+
+# Fontes locais do J.A.R.V.I.S.
+fontes/

@@ -1,9 +1,19 @@
-import type { Goal as CycleGoal, TaskStatus } from "../cycle/contracts.js";
+import type { Goal as CycleGoal, RunStatus } from "../cycle/contracts.js";
 
-export type { TaskStatus } from "../cycle/contracts.js";
+export type { RunStatus } from "../cycle/contracts.js";
+
+export type DocumentaryPhase =
+  | "understanding"
+  | "awaiting_clarification"
+  | "objective_confirmed"
+  | "building_context"
+  | "validating";
+
+export type ExperimentStatus = RunStatus | DocumentaryPhase;
 
 export type DocumentaryActionKind =
   | "read_source"
+  | "send_intention_to_model"
   | "send_sources_to_model"
   | "create_artifact";
 
@@ -99,7 +109,7 @@ export interface ExperimentInput {
 
 export interface ExperimentResult {
   readonly runId: string;
-  readonly status: TaskStatus;
+  readonly status: RunStatus;
   readonly goal: Goal | null;
   readonly outputPath: string | null;
   readonly validation: ValidationReport | null;

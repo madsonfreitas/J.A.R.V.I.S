@@ -1,11 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import Anthropic from "@anthropic-ai/sdk";
 import { ExperimentRunner } from "./documentary/runner.js";
 import { FileCapabilities } from "./documentary/files.js";
 import { loadConfig, type AppConfig } from "./config.js";
-import { AnthropicIntelligence } from "./intelligence/anthropic-intelligence.js";
-import { CliInteraction, collectInput } from "./interface/cli.js";
+import { createIntelligence } from "./intelligence/create-intelligence.js";
+import { CliInteraction, collectInput, exitCodeForStatus } from "./interface/cli.js";
 import { createRunRecorder } from "./observability/run-recorder.js";
 
 async function loadOptionalEnvFile(filePath = ".env"): Promise<void> {
@@ -50,9 +49,12 @@ async function main(): Promise<void> {
     process.stdout.write(
       `\nResultado: ${result.status}\n${result.message}\nRun: ${result.runId}\n`,
     );
-    if (result.status === "failed" || result.status === "rejected") {
-      process.exitCode = 1;
+    if (result.status === "unknown") {
+      process.stdout.write(
+        "O efeito não foi confirmado. Isto não é sucesso nem falha conhecida.\n",
+      );
     }
+    process.exitCode = exitCodeForStatus(result.status);
   } finally {
     interaction.close();
   }
@@ -69,15 +71,13 @@ async function runExperiment(
 
   try {
     const runner = new ExperimentRunner({
-      intelligence: new AnthropicIntelligence(
-        new Anthropic({ apiKey: config.anthropicApiKey }),
-        config.model,
-      ),
+      intelligence: createIntelligence(config),
       files: new FileCapabilities(config.maxSourceBytes),
       recorder,
       interaction,
       maxTotalCharacters: config.maxTotalCharacters,
       modelLabel: config.model,
+      provider: config.provider,
     });
     return await runner.run(input);
   } finally {
