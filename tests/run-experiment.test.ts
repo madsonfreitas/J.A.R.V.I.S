@@ -22,6 +22,7 @@ afterEach(async () => {
 async function createHarness(options: {
   confirms: readonly boolean[];
   answers?: readonly string[];
+  sourceCount?: number;
   outputPath?: string;
   questions?: readonly string[];
   invalidDraft?: boolean;
@@ -30,9 +31,16 @@ async function createHarness(options: {
   directories.push(directory);
   const outputPath = options.outputPath ?? join(directory, "result.md");
   const recorder = await createRunRecorder(join(directory, "run.sqlite"));
+  const sourceCount = options.sourceCount ?? 1;
   const interaction = new ScriptedInteraction(
     options.confirms,
-    options.answers ?? [],
+    [
+      ...Array.from(
+        { length: sourceCount + 1 },
+        () => "public_or_non_sensitive",
+      ),
+      ...(options.answers ?? []),
+    ],
     outputPath,
   );
   const runner = new ExperimentRunner({
@@ -69,6 +77,7 @@ describe("ExperimentRunner", () => {
     const originalBeta = await readFile(sourceBeta, "utf8");
     const { runner, interaction, outputPath, recorder } = await createHarness({
       confirms: [true, true, true, true],
+      sourceCount: 2,
     });
 
     try {

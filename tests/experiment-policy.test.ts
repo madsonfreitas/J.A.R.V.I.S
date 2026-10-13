@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { declaredPublic } from "../src/documentary/disclosure.js";
 import { ExperimentPolicy } from "../src/documentary/policy.js";
 import type { SourceDescriptor } from "../src/documentary/contracts.js";
 
@@ -50,7 +51,7 @@ describe("ExperimentPolicy", () => {
   });
 
   it("exige aprovação para envio ao modelo e criação de markdown novo", () => {
-    const policy = new ExperimentPolicy([source]);
+    const policy = new ExperimentPolicy([source], declaredPublic([source.path]));
 
     expect(
       policy.evaluate({

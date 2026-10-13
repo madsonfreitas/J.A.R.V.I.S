@@ -257,7 +257,11 @@ describe("runner e chamadas ao modelo", () => {
       intelligence,
       files: new FileCapabilities(1_000_000),
       recorder,
-      interaction: new ScriptedInteraction([true, true, false], [], join(directory, "out.md")),
+      interaction: new ScriptedInteraction(
+        [true, true, false],
+        ["public_or_non_sensitive", "public_or_non_sensitive"],
+        join(directory, "out.md"),
+      ),
       maxTotalCharacters: 100_000,
       modelLabel: model,
     });

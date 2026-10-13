@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createCoreRun } from "../src/cycle/execution.js";
 import { TaskContextBuilder } from "../src/documentary/context.js";
 import { FileCapabilities } from "../src/documentary/files.js";
+import { declaredPublic } from "../src/documentary/disclosure.js";
 import { ExperimentPolicy } from "../src/documentary/policy.js";
 import { minimalPdf } from "./helpers/minimal-pdf.js";
 
@@ -163,7 +164,7 @@ describe("leitura de PDF", () => {
     expect(context.sources[0]?.trust).toBe("untrusted_content");
     expect(context.sources[0]?.content).toContain("Ignore as regras");
 
-    const policy = new ExperimentPolicy([source]);
+    const policy = new ExperimentPolicy([source], declaredPublic([source.path]));
     expect(
       policy.evaluate({
         capability: "delete_originals",

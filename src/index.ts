@@ -1,10 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import Anthropic from "@anthropic-ai/sdk";
 import { ExperimentRunner } from "./documentary/runner.js";
 import { FileCapabilities } from "./documentary/files.js";
 import { loadConfig, type AppConfig } from "./config.js";
-import { AnthropicIntelligence } from "./intelligence/anthropic-intelligence.js";
+import { createIntelligence } from "./intelligence/create-intelligence.js";
+import { displayError } from "./intelligence/safe-error.js";
 import { CliInteraction, collectInput, exitCodeForStatus } from "./interface/cli.js";
 import { createRunRecorder } from "./observability/run-recorder.js";
 
@@ -72,15 +72,13 @@ async function runExperiment(
 
   try {
     const runner = new ExperimentRunner({
-      intelligence: new AnthropicIntelligence(
-        new Anthropic({ apiKey: config.anthropicApiKey }),
-        config.model,
-      ),
+      intelligence: createIntelligence(config),
       files: new FileCapabilities(config.maxSourceBytes),
       recorder,
       interaction,
       maxTotalCharacters: config.maxTotalCharacters,
       modelLabel: config.model,
+      provider: config.provider,
     });
     return await runner.run(input);
   } finally {
@@ -91,8 +89,6 @@ async function runExperiment(
 try {
   await main();
 } catch (error) {
-  const message =
-    error instanceof Error ? error.message : "Falha inesperada na CLI.";
-  process.stderr.write(`${message}\n`);
+  process.stderr.write(`${displayError(error)}\n`);
   process.exitCode = 1;
 }
