@@ -14,7 +14,7 @@ import {
   type Permit,
 } from "../cycle/execution.js";
 import type { ProviderName } from "../config.js";
-import { disclosurePrompt, parseDisclosure, type SendDisclosures } from "./disclosure.js";
+import { buildSourceReference, disclosurePrompt, parseDisclosure, type SendDisclosures } from "./disclosure.js";
 import type { DocumentaryIntelligencePort } from "./intelligence-port.js";
 import { TaskContextBuilder } from "./context.js";
 import type {
@@ -124,6 +124,7 @@ export class ExperimentRunner {
         policy,
         input.intention,
         clarifications,
+        sources,
         setStatus,
       );
       if (!isGoal(understood)) {
@@ -160,6 +161,7 @@ export class ExperimentRunner {
           policy,
           input.intention,
           clarifications,
+          sources,
           setStatus,
         );
         if (!isGoal(nextGoal)) {
@@ -419,9 +421,14 @@ export class ExperimentRunner {
     policy: ExperimentPolicy,
     intention: string,
     clarifications: readonly Clarification[],
+    sources: readonly SourceDescriptor[],
     setStatus: (status: ExperimentStatus, message: string) => Promise<void>,
   ): Promise<DocumentaryGoal | ExperimentResult> {
     await setStatus("understanding", "Compreendendo a intenção.");
+    const reference = buildSourceReference(sources, (path) =>
+      policy.sourceClassification(path),
+    );
+    policy.noteUnderstandingPaths(reference.paths);
     const outcome = await this.perform(
       session,
       modelAction("send_intention_to_model", this.deps.modelLabel, "Enviar a intenção ao provedor de inteligência."),
@@ -430,14 +437,15 @@ export class ExperimentRunner {
         this.deps.intelligence.understandIntent(permit, {
           intention,
           clarifications,
+          sourceReference: reference.text,
         }),
       async (decision) => {
         await setStatus("awaiting_approval", decision.reason);
         return this.deps.interaction.confirm("Enviar intenção ao provedor de IA", [
           "Efeito autorizado somente se você aceitar: enviar a intenção ao modelo.",
           ...this.providerNotice(),
-          "A intenção e os esclarecimentos já classificados serão enviados agora.",
-          "As fontes ainda não entram nesta chamada.",
+          "Será enviado: a intenção e os esclarecimentos já classificados.",
+          reference.text,
           "Esta confirmação não classifica o conteúdo e não autoriza outra chamada.",
           "Isto não autoriza o envio das fontes nem a criação do arquivo.",
         ]);

@@ -15,6 +15,7 @@ import {
   DraftArtifactSchema,
   GoalSchema,
 } from "../documentary/intelligence-schemas.js";
+import { sourceReferenceForModel } from "../documentary/disclosure.js";
 import {
   localResponseFailureMessage,
   uncertainProviderMessage,
@@ -66,6 +67,8 @@ ${request.intention}
 
 Esclarecimentos:
 ${clarificationText}
+
+${sourceReferenceForModel(request.sourceReference)}
 
 JSON esperado:
 {

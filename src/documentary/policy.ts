@@ -8,6 +8,7 @@ export class ExperimentPolicy {
   private readonly intentionClass: DisclosureClass;
   private readonly sourceClasses: ReadonlyMap<string, DisclosureClass>;
   private readonly clarificationClasses: DisclosureClass[];
+  private understandingPaths: readonly string[] = [];
 
   public constructor(
     sources: readonly SourceDescriptor[],
@@ -30,13 +31,21 @@ export class ExperimentPolicy {
     this.clarificationClasses.push(value);
   }
 
+  public sourceClassification(path: string): DisclosureClass | undefined {
+    return this.sourceClasses.get(resolve(path));
+  }
+
+  public noteUnderstandingPaths(paths: readonly string[]): void {
+    this.understandingPaths = paths.map((path) => resolve(path));
+  }
+
   public evaluate(action: ActionProposal): PolicyDecision {
     switch (action.capability) {
       case "read_source":
         return this.evaluateRead(action);
-      case "send_sources_to_model":
-      case "send_intention_to_model": {
-        const blocked = this.blockedPayloads();
+      case "send_intention_to_model":
+      case "send_sources_to_model": {
+        const blocked = this.blockedPayloads(action.capability);
         if (blocked.length > 0) {
           return {
             action,
@@ -115,14 +124,22 @@ export class ExperimentPolicy {
     };
   }
 
-  private blockedPayloads(): string[] {
+  private blockedPayloads(capability: string): string[] {
     const blocked: string[] = [];
     if (this.intentionClass !== "public_or_non_sensitive") {
       blocked.push("intenção");
     }
-    for (const path of this.authorizedSources) {
+    const sourcePaths =
+      capability === "send_intention_to_model"
+        ? this.understandingPaths
+        : this.authorizedSources;
+    for (const path of sourcePaths) {
       if (this.sourceClasses.get(path) !== "public_or_non_sensitive") {
-        blocked.push(path);
+        blocked.push(
+          capability === "send_intention_to_model"
+            ? "referência de compreensão"
+            : "conteúdo de fonte",
+        );
       }
     }
     this.clarificationClasses.forEach((value, index) => {

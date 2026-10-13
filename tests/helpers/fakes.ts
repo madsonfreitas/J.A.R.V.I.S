@@ -127,7 +127,10 @@ export class ScriptedInteraction implements ExperimentInteraction {
     return answer;
   }
 
-  public async confirm(): Promise<boolean> {
+  public seenDetails: string[][] = [];
+
+  public async confirm(_title = "", details: readonly string[] = []): Promise<boolean> {
+    this.seenDetails.push([...details]);
     const value = this.confirms[this.confirmIndex];
     this.confirmIndex += 1;
     if (value === undefined) {

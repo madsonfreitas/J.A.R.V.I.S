@@ -23,12 +23,14 @@ afterEach(async () => {
 class CountingIntelligence extends FakeIntelligence {
   public intentionCalls = 0;
   public draftCalls = 0;
+  public sourceReference = "";
 
   public override async understandIntent(
     permit: Parameters<FakeIntelligence["understandIntent"]>[0],
     request: Parameters<FakeIntelligence["understandIntent"]>[1],
   ) {
     this.intentionCalls += 1;
+    this.sourceReference = request.sourceReference ?? "";
     return super.understandIntent(permit, request);
   }
 
@@ -71,19 +73,34 @@ const source: SourceDescriptor = {
 };
 
 describe("privacidade do envio", () => {
-  it("bloqueia private, unknown, ausência e conflito sem chamar o modelo", async () => {
+  it("bloqueia intenção não pública sem chamar o modelo", async () => {
     for (const answers of [
       ["private", "public_or_non_sensitive"],
       ["unknown", "public_or_non_sensitive"],
       ["", "public_or_non_sensitive"],
       ["public_or_non_sensitive private", "public_or_non_sensitive"],
-      ["public_or_non_sensitive", "private"],
     ]) {
       const { result, intelligence } = await runWith(answers);
       expect(result.status).toBe("rejected");
       expect(intelligence.intentionCalls).toBe(0);
       expect(intelligence.draftCalls).toBe(0);
     }
+  });
+
+  it("não envia o conteúdo de uma fonte privada na compreensão nem depois", async () => {
+    const { result, intelligence } = await runWith([
+      "public_or_non_sensitive",
+      "private",
+    ]);
+
+    expect(intelligence.intentionCalls).toBe(1);
+    expect(intelligence.draftCalls).toBe(0);
+    expect(result.status).toBe("rejected");
+    expect(intelligence.sourceReference).not.toContain("alpha.txt");
+    expect(intelligence.sourceReference).not.toContain(alpha);
+    expect(intelligence.sourceReference).toContain(
+      "Nenhuma referência de fonte é enviada nesta chamada.",
+    );
   });
 
   it("não deixa uma fonte pública liberar outra fonte não classificada", async () => {
@@ -94,8 +111,11 @@ describe("privacidade do envio", () => {
     );
 
     expect(result.status).toBe("rejected");
-    expect(intelligence.intentionCalls).toBe(0);
+    expect(intelligence.intentionCalls).toBe(1);
     expect(intelligence.draftCalls).toBe(0);
+    expect(intelligence.sourceReference).toContain("Uma fonte pública já foi selecionada.");
+    expect(intelligence.sourceReference).not.toContain("beta.md");
+    expect(intelligence.sourceReference).not.toContain(beta);
   });
 
   it("não deixa a classificação da intenção liberar um esclarecimento novo", async () => {
@@ -130,6 +150,6 @@ describe("privacidade do envio", () => {
     expect(policy.evaluate(proposal).outcome).toBe("deny");
     expect(
       policy.evaluate({ ...proposal, capability: "send_intention_to_model" }).outcome,
-    ).toBe("deny");
+    ).toBe("require_approval");
   });
 });
