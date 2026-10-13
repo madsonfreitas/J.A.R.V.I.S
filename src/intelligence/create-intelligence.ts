@@ -19,5 +19,6 @@ export function createIntelligence(
   return new AnthropicIntelligence(
     new Anthropic({ apiKey: config.anthropicApiKey }),
     config.model,
+    config.anthropicApiKey,
   );
 }

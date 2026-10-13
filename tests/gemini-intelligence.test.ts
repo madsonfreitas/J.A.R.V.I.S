@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { ActionProposal, PolicyDecision, PolicyOutcome } from "../src/cycle/contracts.js";
 import { createCoreRun, type Permit } from "../src/cycle/execution.js";
 import type { CreateDraftRequest, UnderstandIntentRequest } from "../src/documentary/intelligence-port.js";
-import { GeminiIntelligence } from "../src/intelligence/gemini-intelligence.js";
+import {
+  GEMINI_REQUEST_TIMEOUT_MS,
+  GeminiIntelligence,
+} from "../src/intelligence/gemini-intelligence.js";
 
 const model = "gemini-3.8-flash";
 const secret = "gemini-test-key";
@@ -130,7 +133,9 @@ describe("GeminiIntelligence", () => {
     expect(generateContent).toHaveBeenCalledTimes(1);
     const request = generateContent.mock.calls[0]?.[0];
     expect(request?.config?.responseMimeType).toBe("application/json");
-    expect(request?.config?.httpOptions).toBeUndefined();
+    expect(request?.config?.httpOptions).toEqual({
+      timeout: GEMINI_REQUEST_TIMEOUT_MS,
+    });
     expect(request?.config?.tools).toBeUndefined();
   });
 
@@ -178,6 +183,55 @@ describe("GeminiIntelligence", () => {
     expect(generateContent).toHaveBeenCalledTimes(1);
     if (result.outcome === "unknown") {
       expect(result.message).not.toContain(secret);
+    }
+  });
+
+  it("trata timeout do cliente como efeito incerto, sem nova chamada", async () => {
+    vi.useFakeTimers();
+    try {
+      const generateContent = vi.fn(
+        (request: {
+          config?: { httpOptions?: { timeout?: number; retryOptions?: unknown } };
+        }) =>
+          new Promise((_resolve, reject) => {
+            const timeout = request.config?.httpOptions?.timeout ?? 0;
+            setTimeout(() => {
+              const error = new Error(
+                `timeout ${secret} https://example.test?key=${secret}`,
+              );
+              error.name = "AbortError";
+              error.cause = new Error(`cause ${secret} authorization: Bearer ${secret}`);
+              reject(error);
+            }, timeout);
+          }),
+      );
+      const intelligence = new GeminiIntelligence(
+        { models: { generateContent } } as unknown as GoogleGenAI,
+        model,
+        secret,
+      );
+      const resultPromise = createCoreRun("timeout").attempt({
+        proposal: proposal("send_intention_to_model"),
+        evaluate: decide("allow"),
+        confirm: async () => true,
+        execute: (permit) => intelligence.understandIntent(permit, intentionRequest),
+      });
+      await vi.advanceTimersByTimeAsync(GEMINI_REQUEST_TIMEOUT_MS);
+      const result = await resultPromise;
+
+      expect(result.outcome).toBe("unknown");
+      expect(generateContent).toHaveBeenCalledTimes(1);
+      const request = generateContent.mock.calls[0]?.[0];
+      expect(request?.config?.httpOptions?.timeout).toBe(GEMINI_REQUEST_TIMEOUT_MS);
+      expect(request?.config?.httpOptions?.retryOptions).toBeUndefined();
+      if (result.outcome === "unknown") {
+        expect(result.message).toContain("Tempo esgotado");
+        expect(result.message).not.toContain(secret);
+        expect(result.message).not.toContain("example.test");
+        expect(result.message).not.toContain("Bearer");
+      }
+    } finally {
+      vi.useRealTimers();
     }
   });
 

@@ -474,6 +474,9 @@ export class ExperimentRunner {
       confirm: async (current) => confirm?.(current) ?? false,
       execute: async (permit) => {
         await this.deps.interaction.showStatus("executing", proposal.effect);
+        if (isExternalModelSend(proposal.capability)) {
+          this.deps.recorder.setStatus(session.runId, "executing", proposal.effect);
+        }
         return execute(permit);
       },
     });
@@ -566,6 +569,13 @@ export class ExperimentRunner {
       message,
     };
   }
+}
+
+function isExternalModelSend(capability: string): boolean {
+  return (
+    capability === "send_intention_to_model" ||
+    capability === "send_sources_to_model"
+  );
 }
 
 function modelAction(

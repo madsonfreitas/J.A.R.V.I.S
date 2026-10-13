@@ -4,6 +4,7 @@ import { ExperimentRunner } from "./documentary/runner.js";
 import { FileCapabilities } from "./documentary/files.js";
 import { loadConfig, type AppConfig } from "./config.js";
 import { createIntelligence } from "./intelligence/create-intelligence.js";
+import { displayError } from "./intelligence/safe-error.js";
 import { CliInteraction, collectInput, exitCodeForStatus } from "./interface/cli.js";
 import { createRunRecorder } from "./observability/run-recorder.js";
 
@@ -88,8 +89,6 @@ async function runExperiment(
 try {
   await main();
 } catch (error) {
-  const message =
-    error instanceof Error ? error.message : "Falha inesperada na CLI.";
-  process.stderr.write(`${message}\n`);
+  process.stderr.write(`${displayError(error)}\n`);
   process.exitCode = 1;
 }
