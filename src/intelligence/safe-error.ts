@@ -9,7 +9,7 @@ export function uncertainProviderMessage(
   const parts = [
     "A chamada externa foi iniciada, mas não há evidência suficiente do efeito.",
   ];
-  if (name === "AbortError" || name === "TimeoutError") {
+  if (name === "AbortError" || name === "TimeoutError" || isOpenAITimeout(error)) {
     parts.push("Tempo esgotado.");
   } else if (status !== undefined) {
     parts.push(`Status ${status}.`);
@@ -59,6 +59,15 @@ function readStatus(error: unknown): number | undefined {
     return status;
   }
   return undefined;
+}
+
+function isOpenAITimeout(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  // openai 7.33.0: APIConnectionTimeoutError.name fica "Error"; o nome da classe está no construtor.
+  const constructorName = (error as { constructor?: { name?: unknown } }).constructor?.name;
+  return constructorName === "APIConnectionTimeoutError";
 }
 
 function readName(error: unknown): string | undefined {

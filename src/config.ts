@@ -6,6 +6,7 @@ const EnvironmentSchema = z
     JARVIS_PROVIDER: z.string().optional(),
     ANTHROPIC_API_KEY: z.string().optional(),
     GEMINI_API_KEY: z.string().optional(),
+    GROQ_API_KEY: z.string().optional(),
     JARVIS_MODEL: z.string().optional(),
     JARVIS_DATA_DIR: z.string().min(1).default(".jarvis"),
     JARVIS_MAX_SOURCE_BYTES: z.coerce
@@ -17,10 +18,10 @@ const EnvironmentSchema = z
   })
   .superRefine((value, context) => {
     const provider = (value.JARVIS_PROVIDER ?? "anthropic").trim();
-    if (provider !== "anthropic" && provider !== "gemini") {
+    if (provider !== "anthropic" && provider !== "gemini" && provider !== "groq") {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "JARVIS_PROVIDER deve ser anthropic ou gemini.",
+        message: "JARVIS_PROVIDER deve ser anthropic, gemini ou groq.",
       });
       return;
     }
@@ -36,14 +37,27 @@ const EnvironmentSchema = z
         message: "GEMINI_API_KEY é obrigatória.",
       });
     }
+    if (provider === "groq" && !value.GROQ_API_KEY?.trim()) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "GROQ_API_KEY é obrigatória.",
+      });
+    }
+    if (provider === "groq" && !value.JARVIS_MODEL?.trim()) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "JARVIS_MODEL é obrigatório para o provedor groq.",
+      });
+    }
   });
 
-export type ProviderName = "anthropic" | "gemini";
+export type ProviderName = "anthropic" | "gemini" | "groq";
 
 export interface AppConfig {
   readonly provider: ProviderName;
   readonly anthropicApiKey: string;
   readonly geminiApiKey: string;
+  readonly groqApiKey: string;
   readonly model: string;
   readonly dataDirectory: string;
   readonly maxSourceBytes: number;
@@ -73,6 +87,7 @@ export function loadConfig(
     provider,
     anthropicApiKey: parsed.data.ANTHROPIC_API_KEY?.trim() ?? "",
     geminiApiKey: parsed.data.GEMINI_API_KEY?.trim() ?? "",
+    groqApiKey: parsed.data.GROQ_API_KEY?.trim() ?? "",
     model,
     dataDirectory: resolve(parsed.data.JARVIS_DATA_DIR),
     maxSourceBytes: parsed.data.JARVIS_MAX_SOURCE_BYTES,

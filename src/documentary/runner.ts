@@ -376,6 +376,11 @@ export class ExperimentRunner {
         "Gemini Free Tier: os termos aplicáveis podem permitir que o Google use estes dados para melhorar seus produtos.",
       );
     }
+    if (this.providerName() === "groq") {
+      lines.push(
+        "Groq: este programa envia o conteúdo autorizado à Groq e não controla a retenção na conta do provedor.",
+      );
+    }
     return lines;
   }
 

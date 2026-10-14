@@ -23,9 +23,27 @@ describe("loadConfig", () => {
     expect(config.anthropicApiKey).toBe("");
   });
 
-  it("falha antes de qualquer chamada quando o provedor ou a chave Gemini é inválida", () => {
-    expect(() => loadConfig({ JARVIS_PROVIDER: "openai" })).toThrow(/anthropic ou gemini/);
+  it("aceita Groq somente com chave e modelo explícitos", () => {
+    const config = loadConfig({
+      JARVIS_PROVIDER: "groq",
+      GROQ_API_KEY: "groq-test-key",
+      JARVIS_MODEL: "openai/gpt-oss-20b",
+    });
+
+    expect(config.provider).toBe("groq");
+    expect(config.model).toBe("openai/gpt-oss-20b");
+    expect(config.groqApiKey).toBe("groq-test-key");
+    expect(config.anthropicApiKey).toBe("");
+    expect(config.geminiApiKey).toBe("");
+  });
+
+  it("falha antes de qualquer chamada quando o provedor ou a chave é inválida", () => {
+    expect(() => loadConfig({ JARVIS_PROVIDER: "openai" })).toThrow(/anthropic, gemini ou groq/);
     expect(() => loadConfig({ JARVIS_PROVIDER: "gemini" })).toThrow(/GEMINI_API_KEY/);
+    expect(() => loadConfig({ JARVIS_PROVIDER: "groq" })).toThrow(/GROQ_API_KEY/);
+    expect(() =>
+      loadConfig({ JARVIS_PROVIDER: "groq", GROQ_API_KEY: "groq-test-key" }),
+    ).toThrow(/JARVIS_MODEL é obrigatório/);
     expect(() => loadConfig({})).toThrow(/ANTHROPIC_API_KEY/);
   });
 });
