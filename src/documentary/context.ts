@@ -1,24 +1,16 @@
 import type { ContextSource, SourceDescriptor, TaskContext } from "./contracts.js";
 
-export interface AuthorizedSourceReader {
-  readSource(source: SourceDescriptor): Promise<string>;
-}
-
 export class TaskContextBuilder {
-  public constructor(
-    private readonly sourceReader: AuthorizedSourceReader,
-    private readonly maxTotalCharacters: number,
-  ) {}
+  public constructor(private readonly maxTotalCharacters: number) {}
 
-  public async build(
-    sources: readonly SourceDescriptor[],
-  ): Promise<TaskContext> {
+  public assemble(
+    reads: readonly { source: SourceDescriptor; content: string }[],
+  ): TaskContext {
     const contextSources: ContextSource[] = [];
     const warnings: string[] = [];
     let totalCharacters = 0;
 
-    for (const source of sources) {
-      const content = await this.sourceReader.readSource(source);
+    for (const { source, content } of reads) {
       totalCharacters += content.length;
 
       if (totalCharacters > this.maxTotalCharacters) {

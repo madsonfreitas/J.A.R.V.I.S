@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { open, readFile, stat, unlink } from "node:fs/promises";
 import { basename, extname, resolve } from "node:path";
+import { claimPermit, UnknownEffectError, type Permit } from "../cycle/execution.js";
 import type { CapabilityEffect, SourceDescriptor } from "./contracts.js";
+import { extractPdfText } from "./pdf-text.js";
 
-const ALLOWED_EXTENSIONS = new Set([".txt", ".md"]);
+const ALLOWED_EXTENSIONS = new Set([".txt", ".md", ".pdf"]);
 
 export class FileCapabilities {
   public constructor(private readonly maxSourceBytes: number) {}
@@ -14,7 +16,7 @@ export class FileCapabilities {
 
     if (!ALLOWED_EXTENSIONS.has(extension)) {
       throw new Error(
-        `Somente arquivos .txt e .md são aceitos neste experimento: ${resolved}`,
+        `Somente arquivos .txt, .md e .pdf são aceitos neste experimento: ${resolved}`,
       );
     }
 
@@ -38,29 +40,63 @@ export class FileCapabilities {
     };
   }
 
-  public async readSource(source: SourceDescriptor): Promise<string> {
+  public async readSource(
+    permit: Permit,
+    source: SourceDescriptor,
+  ): Promise<string> {
+    claimPermit(permit, {
+      runId: permit.runId,
+      attemptId: permit.attemptId,
+      capability: "read_source",
+      resource: source.path,
+      destination: null,
+    });
+    if (extname(source.path).toLowerCase() === ".pdf") {
+      const bytes = new Uint8Array(await readFile(source.path));
+      return extractPdfText(bytes);
+    }
     return readFile(source.path, "utf8");
   }
 
   public async createArtifact(
+    permit: Permit,
     destination: string,
     content: string,
   ): Promise<CapabilityEffect> {
     const resolved = resolve(destination);
-
     if (extname(resolved).toLowerCase() !== ".md") {
       throw new Error("O artefato final deve ser um arquivo .md.");
     }
+
+    claimPermit(permit, {
+      runId: permit.runId,
+      attemptId: permit.attemptId,
+      capability: "create_artifact",
+      resource: resolved,
+      destination: resolved,
+    });
 
     const handle = await open(resolved, "wx");
 
     try {
       await handle.writeFile(content, "utf8");
     } catch (error) {
-      await unlink(resolved).catch(() => undefined);
+      let removed = false;
+      try {
+        await unlink(resolved);
+        removed = true;
+      } catch {
+        removed = false;
+      }
+      if (!removed) {
+        throw new UnknownEffectError(
+          "A escrita falhou e não há evidência de que o arquivo foi removido.",
+          { cause: error },
+        );
+      }
       throw error;
     } finally {
-      await handle.close();
+      await handle.close().catch(() => undefined);
     }
 
     return {

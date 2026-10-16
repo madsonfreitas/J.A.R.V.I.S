@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { TaskStatus } from "../cycle/contracts.js";
+import type { RunStatus } from "../cycle/contracts.js";
 
 export class RunRecorder {
   private readonly database: DatabaseSync;
@@ -45,14 +45,14 @@ export class RunRecorder {
       .run(runId, now(), type, JSON.stringify(payload));
   }
 
-  public setStatus(runId: string, status: TaskStatus, message: string): void {
+  public setStatus(runId: string, status: RunStatus | string, message: string): void {
     this.database
       .prepare("UPDATE runs SET status = ?, message = ? WHERE id = ?")
       .run(status, message, runId);
     this.record(runId, "status", { status, message });
   }
 
-  public finish(runId: string, status: TaskStatus, message: string): void {
+  public finish(runId: string, status: RunStatus, message: string): void {
     this.database
       .prepare(
         "UPDATE runs SET status = ?, message = ?, finished_at = ? WHERE id = ?",

@@ -1,27 +1,65 @@
 import { resolve } from "node:path";
 import type { ActionProposal, PolicyDecision } from "../cycle/contracts.js";
 import type { SourceDescriptor } from "./contracts.js";
+import type { DisclosureClass, SendDisclosures } from "./disclosure.js";
 
 export class ExperimentPolicy {
   private readonly authorizedSources: ReadonlySet<string>;
+  private readonly intentionClass: DisclosureClass;
+  private readonly sourceClasses: ReadonlyMap<string, DisclosureClass>;
+  private readonly clarificationClasses: DisclosureClass[];
+  private understandingPaths: readonly string[] = [];
 
-  public constructor(sources: readonly SourceDescriptor[]) {
+  public constructor(
+    sources: readonly SourceDescriptor[],
+    disclosures?: SendDisclosures,
+  ) {
     this.authorizedSources = new Set(
       sources.map((source) => resolve(source.path)),
     );
+    this.intentionClass = disclosures?.intention ?? "unknown";
+    this.sourceClasses = new Map(
+      Object.entries(disclosures?.sources ?? {}).map(([path, value]) => [
+        resolve(path),
+        value,
+      ]),
+    );
+    this.clarificationClasses = [...(disclosures?.clarifications ?? [])];
+  }
+
+  public addClarificationDisclosure(value: DisclosureClass): void {
+    this.clarificationClasses.push(value);
+  }
+
+  public sourceClassification(path: string): DisclosureClass | undefined {
+    return this.sourceClasses.get(resolve(path));
+  }
+
+  public noteUnderstandingPaths(paths: readonly string[]): void {
+    this.understandingPaths = paths.map((path) => resolve(path));
   }
 
   public evaluate(action: ActionProposal): PolicyDecision {
     switch (action.capability) {
       case "read_source":
         return this.evaluateRead(action);
-      case "send_sources_to_model":
+      case "send_intention_to_model":
+      case "send_sources_to_model": {
+        const blocked = this.blockedPayloads(action.capability);
+        if (blocked.length > 0) {
+          return {
+            action,
+            outcome: "deny",
+            reason: `Envio bloqueado. Estes payloads não estão declarados como public_or_non_sensitive: ${blocked.join(", ")}.`,
+          };
+        }
         return {
           action,
           outcome: "require_approval",
           reason:
             "Enviar conteúdo a um provedor externo exige consentimento explícito.",
         };
+      }
       case "create_artifact":
         return this.evaluateCreate(action);
       default:
@@ -84,5 +122,31 @@ export class ExperimentPolicy {
       reason:
         "Criar um efeito persistente exige aprovação do destino final.",
     };
+  }
+
+  private blockedPayloads(capability: string): string[] {
+    const blocked: string[] = [];
+    if (this.intentionClass !== "public_or_non_sensitive") {
+      blocked.push("intenção");
+    }
+    const sourcePaths =
+      capability === "send_intention_to_model"
+        ? this.understandingPaths
+        : this.authorizedSources;
+    for (const path of sourcePaths) {
+      if (this.sourceClasses.get(path) !== "public_or_non_sensitive") {
+        blocked.push(
+          capability === "send_intention_to_model"
+            ? "referência de compreensão"
+            : "conteúdo de fonte",
+        );
+      }
+    }
+    this.clarificationClasses.forEach((value, index) => {
+      if (value !== "public_or_non_sensitive") {
+        blocked.push(`esclarecimento ${index + 1}`);
+      }
+    });
+    return blocked;
   }
 }
